@@ -39,11 +39,12 @@ def run():
         dest = root / f"f{i:05d}.npz"
         if dest.exists():
             return
-        q, c = divmod(i, 6)
+        q, c = divmod(i, NC)
         n = s["ns"][sel[q], c]
+        # Features are taken 1200 px across; an image at least twice that is decoded at half size.
         im = cv.imread(
             str(D / "frames" / NAMES[c] / f"{n:06d}.jpg"),
-            cv.IMREAD_REDUCED_GRAYSCALE_2 if c == 0 else 0,
+            cv.IMREAD_REDUCED_GRAYSCALE_2 if cams[c].width >= 2400 else 0,
         )
         h, w = masks[c].shape
         im = cv.resize(im, (w, h), interpolation=cv.INTER_AREA)
@@ -68,41 +69,32 @@ def run():
         np.savez(dest, p=p[idx].astype("f"), d=dsc)
 
     print("wide frames", len(sel), flush=True)
-    list(ThreadPoolExecutor(12).map(get, range(6 * len(sel))))
+    list(ThreadPoolExecutor(12).map(get, range(NC * len(sel))))
     print("wide features ready", flush=True)
     pairs = defaultdict(set)
 
+    # Image id = selected keyframe * NC + lens.
     def add(i, j):
         if (
             i != j
-            and 0 <= j < 6 * len(sel)
-            and abs(kt[sel[i // 6]] - kt[sel[j // 6]]) < 12
+            and 0 <= j < NC * len(sel)
+            and abs(kt[sel[i // NC]] - kt[sel[j // NC]]) < 12
         ):
             a, b = sorted((i, j))
             pairs[b].add(a)
 
     for q in range(len(sel)):
-        for c in range(6):
+        for c in range(NC):
             for off in [1, 2, 4]:
-                add(6 * q + c, 6 * (q + off) + c)
-        for a, b, offs in [
-            (0, 2, [0, 1, 3, 6, 10, 15]),
-            (0, 3, [0, 1, 3, 6, 10, 15]),
-            (0, 4, [2, 5, 9, 14]),
-            (0, 5, [2, 5, 9, 14]),
-            (2, 4, [-1, 0, 1, 3, 6]),
-            (3, 5, [-1, 0, 1, 3, 6]),
-            (4, 1, [-1, 0, 1, 3, 7]),
-            (5, 1, [-1, 0, 1, 3, 7]),
-            (2, 1, [2, 5, 9]),
-            (3, 1, [2, 5, 9]),
-        ]:
+                add(NC * q + c, NC * (q + off) + c)
+        # Lens pairs with a shared view among the cameras this car has, and how many keyframes apart.
+        for a, b, offs in hardware.cross(NAMES):
             for off in offs:
-                add(6 * q + a, 6 * (q + off) + b)
+                add(NC * q + a, NC * (q + off) + b)
     # Descriptors are compact uint8 while idle. Float conversion is local to each match.
     P = []
     F = []
-    for i in range(len(sel) * 6):
+    for i in range(len(sel) * NC):
         with np.load(root / f"f{i:05d}.npz") as f:
             P.append(f["p"])
             F.append(f["d"])
@@ -138,7 +130,7 @@ def run():
             for key in f.files:
                 edges.append((int(key), j, f[key]))
     edges.sort(
-        key=lambda z: (z[0] % 6 != z[1] % 6, abs(z[0] // 6 - z[1] // 6), -len(z[2]))
+        key=lambda z: (z[0] % NC != z[1] % NC, abs(z[0] // NC - z[1] // NC), -len(z[2]))
     )
 
     def rootid(i):
@@ -168,7 +160,7 @@ def run():
     good = {
         x: [x]
         for x, vs in views.items()
-        if len(vs) >= 4 and len({z % 6 for z in vs}) > 1
+        if len(vs) >= 4 and len({z % NC for z in vs}) > 1
     }
     for i in parent:
         j = rootid(i)
@@ -182,8 +174,8 @@ def run():
     np.savez(
         W / "cross-tracks.npz",
         id=ids.astype("i"),
-        k=sel[im // 6].astype("i"),
-        cam=(im % 6).astype("uint8"),
+        k=sel[im // NC].astype("i"),
+        cam=(im % NC).astype("uint8"),
         uv=p,
     )
     print("cross-landmarks", len(tr), "obs", len(n), flush=True)

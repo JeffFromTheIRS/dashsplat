@@ -19,7 +19,7 @@ from stages import HOME, binlink, read
 
 sys.path.insert(0, str(HOME / "pipeline/calib"))
 from deliver import bundle, transfers
-from features import CAMS, W, extract, match
+from features import CAMS, NC, W, extract, match
 from ground import measure
 from solve import B, Scene
 
@@ -104,7 +104,7 @@ def samples():
     hh = [make(*hold, 5) for hold in holds]
     if any(len(panel) < 10 for panel in hh):
         raise SparseEvidence(
-            "not enough synchronized six-camera shutters to verify the rig"
+            "not enough shutters synchronized across all cameras to verify the rig"
         )
     return hh, [r for s, (i, j) in enumerate(sorted(selected)) for r in make(i, j, s)]
 
@@ -172,7 +172,7 @@ def frozen(spec, step):
     target_rows = {}
     spatial = {}
     for i, n in enumerate(CAMS):
-        sel = tar // 3100 % 6 == i
+        sel = tar // 3100 % NC == i
         # One residual per target image feature even if several other lenses
         # independently triangulated it. Windows have disjoint target shutters.
         unique, ix, multiplicity = np.unique(
@@ -180,7 +180,7 @@ def frozen(spec, step):
         )
         es = err[sel][np.argsort(ix, kind="stable")]
         target_rows[n] = [
-            (int(s.fr[k // 3100 // 6]["ns"][i]), int(k % 3100)) for k in unique
+            (int(s.fr[k // 3100 // NC]["ns"][i]), int(k % 3100)) for k in unique
         ]
         if len(unique):
             uvp = s.pixels[unique]
@@ -286,12 +286,22 @@ def check(spec, panels, matched=None):
         counts=counts,
         supported_panels=support,
         lens_px=lens,
-        pooled_px=float(np.median(list(lens.values()))) if len(lens) >= 4 else None,
+        # The pooled verdict needs four supported lenses, or all but one on a car with fewer cameras.
+        pooled_px=float(np.median(list(lens.values())))
+        if len(lens) >= min(4, NC - 1)
+        else None,
         warnings=warnings,
     )
 
 
 BASELINE = Path(__file__).with_name("rig-baseline.json")
+OWN_BASELINE = HOME / "calib/rig-baseline.json"
+
+
+def limits_file():
+    """The limits belong to one rig, so `baseline` writes them beside it. The file in this folder is that of
+    the car this was built on, read when the installation has none of its own."""
+    return OWN_BASELINE if OWN_BASELINE.is_file() else BASELINE
 
 
 def rig_hash():
@@ -302,8 +312,12 @@ def baseline():
     from drive import heavy
     from transactions import atomic_json, identity, lock
 
-    # Disjoint from the original rig solve, its scale test and the requested proof.
-    windows = [(115, 145), (161, 191), (329, 359)]
+    # Three stretches of the calibrated car's drive, disjoint from the rig solve and its scale test. The
+    # defaults are those of the drive this was built on; pass your own as `baseline T0 T1 T0 T1 ...`.
+    times = [float(x) for x in sys.argv[2:]]
+    if len(times) % 2:
+        raise ValueError("baseline windows are pairs of start and end seconds")
+    windows = list(zip(times[::2], times[1::2])) or [(115, 145), (161, 191), (329, 359)]
     rows = []
     with lock(
         HOME / "work/locks/reconstruction.lock",
@@ -362,10 +376,10 @@ def baseline():
         if sum(c in r["lens_px"] for r in rows) >= 2
     }
     atomic_json(
-        BASELINE,
+        OWN_BASELINE,
         dict(
             rig_sha256=rig_hash(),
-            reference="calibrated HW4 drive, native exposures and telemetry only",
+            reference="drive of the calibrated car, native exposures and telemetry only",
             normalization="1448 px image width; median per lens over disjoint shutters, median across two starts, median across lenses",
             rule="max(3 * worst reference, worst reference + 6 * scaled MAD)",
             windows=rows,
@@ -470,7 +484,7 @@ def run():
     report = dict(mode=mode, selected="stored", warnings=[])
     file = W / "verification.json"
     if mode != "stored":
-        base = read(BASELINE)
+        base = read(limits_file())
         if base["rig_sha256"] != rig_hash():
             raise ValueError(
                 "empirical baseline belongs to a different stored bundle; rebuild baseline"

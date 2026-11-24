@@ -13,11 +13,11 @@ def bundle(s):
     ori[:, 1] *= -1
     uv, z = s.project(s.obs, s.points[s.pi])
     err = np.linalg.norm(uv - s.pixels[s.obs], axis=1)
-    c = s.obs // 3100 % 6
+    c = s.obs // 3100 % NC
     fov = []
     full = []
     mask = []
-    for i in range(6):
+    for i in range(NC):
         w, h = s.sizes[i]
         p = s.cam[i]
         m = cv.imread(str(OUT / "masks" / f"{CAMS[i]}.png"), 0)
@@ -46,8 +46,8 @@ def transfers(s):
     items = []
     for a, e in zip(cuts[:-1], cuts[1:]):
         ns = n[a:e]
-        cs = ns // 3100 % 6
-        ks = ns // 3100 // 6
+        cs = ns // 3100 % NC
+        ks = ns // 3100 // NC
         if cs.min() == cs.max():
             continue
         for target, k, ct in zip(ns, ks, cs):
@@ -72,9 +72,10 @@ def transfers(s):
                 )
                 if np.min(rd) < 0.3 or np.max(rd) > 175 or np.sqrt(np.mean(sr**2)) > 2.5:
                     continue
-                near = si[np.argmin(abs(n[si] // 3100 // 6 - k))]
+                near = si[np.argmin(abs(n[si] // 3100 // NC - k))]
                 items.append([target, n[near], *X])
-    data = np.array(items)
+    # No landmark seen by two lenses: possible when no two cameras of the car share a view.
+    data = np.array(items).reshape(-1, 5)
     tar = data[:, 0].astype(int)
     src = data[:, 1].astype(int)
     uv, z = s.project(tar, data[:, 2:])
@@ -87,7 +88,7 @@ def debug(s, d):
     debug.mkdir(exist_ok=True)
     tar, src, uv = transfers(s)
     err = np.linalg.norm(s.pixels[tar] - uv, axis=1)
-    c = tar // 3100 % 6
+    c = tar // 3100 % NC
     stats = []
     smallr = []
     smallo = []
@@ -107,12 +108,17 @@ def debug(s, d):
         cv.imwrite(str(debug / f"{name}-rectified.jpg"), rect)
         smallr.append(cv.resize(rect, (420, 272)))
         use = np.flatnonzero(c == i)
+        if not len(use):
+            # Nothing this lens sees was triangulated from another one, so there is no transfer to draw.
+            smallo.append(np.zeros((300, 860, 3), np.uint8))
+            stats.append([0, np.nan, np.nan, np.nan, np.nan, 0])
+            continue
         ts = tar // 3100
         ss = src // 3100
         pair = Counter(zip(ts[use].tolist(), ss[use].tolist())).most_common(1)[0][0]
         ix = np.flatnonzero((ts == pair[0]) & (ss == pair[1]))
-        kt = pair[0] // 6
-        ks, ci = divmod(pair[1], 6)
+        kt = pair[0] // NC
+        ks, ci = divmod(pair[1], NC)
         sn = CAMS[ci]
         load = lambda cam, frame: cv.imread(
             str(DATA / "frames" / CAMS[cam] / f"{s.fr[frame]['ns'][cam]:06d}.jpg")
@@ -176,9 +182,11 @@ def debug(s, d):
                 len(ix),
             ]
         )
+    if NC % 2:
+        smallr.append(np.zeros_like(smallr[0]))
     cv.imwrite(
         str(debug / "rectified-contact.jpg"),
-        np.vstack([np.hstack(smallr[k : k + 2]) for k in range(0, 6, 2)]),
+        np.vstack([np.hstack(smallr[k : k + 2]) for k in range(0, len(smallr), 2)]),
     )
     cv.imwrite(str(debug / "transfer-contact.jpg"), np.vstack(smallo))
     return stats
@@ -227,10 +235,15 @@ def main():
             )
         )
     json.dump(rig, open(OUT / "rig.json", "w"), indent=2)
+    count = {4: "Four", 6: "Six"}.get(NC, str(NC))
+    spans = ", ".join(
+        "{:g}–{:g}".format(*np.round([min(ts), max(ts)], 1))
+        for ts in ([r["t"] for r in s.fr if r["seg"] == g] for g in sorted({r["seg"] for r in s.fr} - {5}))
+    )
     lines = [
-        "# Six-camera rig calibration — single HW4 drive",
+        f"# {count}-camera rig calibration — single {PROFILE.upper()} drive",
         "",
-        "**Result:** six footage-fitted lenses and poses. Subpixel RMS is an inlier fit statistic. Absolute axle position and independent metric scale are less certain; see below.",
+        f"**Result:** {count.lower()} footage-fitted lenses and poses. Subpixel RMS is an inlier fit statistic. Absolute axle position and independent metric scale are less certain; see below.",
         "",
         "## Method",
         "",
@@ -238,7 +251,7 @@ def main():
         "",
         "The fit uses "
         + str(int(s.valid.sum()))
-        + " synchronized rig frames from five windows (0–4, 82–94, 95–104, 104.1–111.4, 318.5–325 s). Speed-integrated displacement fixes metric scale. Heading and pose soft priors plus a no-lateral-slip and along-track increment residual define the vehicle frame. Dark borders and bodywork are manual polygons from the temporal median of moving footage. Triangulation requires ≥3 consistent observations and rejects behind-camera points. Cauchy BA is followed by 4 px and 3 px geometric outlier gates; the final timing fit does not rethreshold the observations. RMS is sqrt(mean(dx²+dy²)) in native-resolution pixels.",
+        + f" synchronized rig frames from these windows: {spans} s. Speed-integrated displacement fixes metric scale. Heading and pose soft priors plus a no-lateral-slip and along-track increment residual define the vehicle frame. Dark borders and bodywork are manual polygons from the temporal median of moving footage. Triangulation requires ≥3 consistent observations and rejects behind-camera points. Cauchy BA is followed by 4 px and 3 px geometric outlier gates; the final timing fit does not rethreshold the observations. RMS is sqrt(mean(dx²+dy²)) in native-resolution pixels.",
         "",
         "## Rig and final bundle",
         "",
@@ -264,13 +277,19 @@ def main():
     lines += [
         f"The rear tyre corridor photometric road-plane sweep accepted {g['road_pairs']}/{g['road_total']} frame pairs. Its median height in the preliminary frame was {g['road']:.3f} m; 16th–84th percentiles {fmt(g['road_range'], 3)} m. Grades and suspension motion limit absolute height. Yaw comes from robust mid-arc travel direction; lateral zero is the mean of the two left/right mount midpoints. No mirror rotations or pair-specific coordinate equality were imposed.",
         "",
-        f"The no-slip rear-axle fit alone puts the back lens at x={g['rear_x_unconstrained']:.3f} m, outside the car’s −0.977 m rear extent. The delivered common longitudinal origin is the nearest feasible one under that hard body-envelope bound. The {100 * abs(g['x_axle_raw'] - g['x_axle_used']):.1f} cm change applies to all six; it is not a measurement of the rear lens recess. Trust relative baselines more than absolute x. The lateral residual at the unconstrained solution is {g['lateral_rms'] * 1000:.1f} mm per increment (already informed by the no-slip prior).",
+        f"The no-slip rear-axle fit alone puts the back lens at x={g['rear_x_unconstrained']:.3f} m"
+        + (
+            f", outside the car’s −0.977 m rear extent. The delivered common longitudinal origin is the nearest feasible one under that hard body-envelope bound. The {100 * abs(g['x_axle_raw'] - g['x_axle_used']):.1f} cm change applies to every camera; it is not a measurement of the rear lens recess."
+            if g["x_axle_raw"] != g["x_axle_used"]
+            else ", inside the −0.977 m rear extent assumed for the body (a Model 3's), so the longitudinal origin is the fitted one."
+        )
+        + f" Trust relative baselines more than absolute x. The lateral residual at the unconstrained solution is {g['lateral_rms'] * 1000:.1f} mm per increment (already informed by the no-slip prior).",
         "",
     ]
     pairs = []
     E = np.diag([1, -1, 1])
     C = np.diag([-1, 1, 1])
-    for l, r in [(2, 3), (4, 5)]:
+    for l, r in hardware.mirrored(CAMS):
         trans = d["pos"][l] - E @ d["pos"][r]
         ang = np.rad2deg(Rot.from_matrix(d["R"][l].T @ E @ d["R"][r] @ C).magnitude())
         pairs.append((100 * np.linalg.norm(trans), ang))
@@ -298,7 +317,7 @@ def main():
         "",
         "## Held-out scale",
         "",
-        f"{v[0]['start']:.3f}–{v[0]['end']:.3f} s, excluded from both rig and ground fits. Freeze the rig and solve 18 held-out poses and landmarks, with one fixed gauge pose, no velocity/odometric measurements, and only visual velocities for exposure compensation. Arbitrary forward spacings of 0.60 and 1.30 m lead to {v[0]['distance']:.4f} and {v[1]['distance']:.4f} m, with {v[0]['cross_points']} / {v[1]['cross_points']} multi-camera landmarks. Integrated telemetry: {te:.4f} m. Difference **{(v[0]['distance'] / te - 1) * 100:+.2f}%**. This misses the ±1% goal; the rig was not rescaled to the holdout. This short departure is not a whole-drive metric accuracy claim.",
+        f"{v[0]['start']:.3f}–{v[0]['end']:.3f} s, excluded from both rig and ground fits. Freeze the rig and solve {sum(r['seg'] == 5 for r in s.fr)} held-out poses and landmarks, with one fixed gauge pose, no velocity/odometric measurements, and only visual velocities for exposure compensation. Arbitrary forward spacings of 0.60 and 1.30 m lead to {v[0]['distance']:.4f} and {v[1]['distance']:.4f} m, with {v[0]['cross_points']} / {v[1]['cross_points']} multi-camera landmarks. Integrated telemetry: {te:.4f} m. Difference **{(v[0]['distance'] / te - 1) * 100:+.2f}%**. This {'meets' if abs(v[0]['distance'] / te - 1) <= 0.01 else 'misses'} the ±1% goal; the rig was not rescaled to the holdout. This short departure is not a whole-drive metric accuracy claim.",
         "",
         "## Cross-camera checks",
         "",
@@ -312,10 +331,10 @@ def main():
         lines.append(f"|{n}|{k}|{med:.2f} / {p90:.2f}|{count} / {sm:.2f} / {mx:.2f}|")
     lines += [
         "",
-        "The rear is retained. Its masked rim and bumper are not extrapolated into the rectified view. Confidence in the usable optical core is much higher than in the extreme rim or its absolute longitudinal mount. Rectified images use a forward pinhole crop, not a full-width fill of a nearly 180° fisheye. Inspection of the rectified drive-through images showed straight masonry joints, posts and lane edges. All six paired overlays place projections on the same identifiable landmarks (traffic signal supports, façade edges, signs and trees); the front has the largest transfer errors.",
+        "The rear is retained. Its masked rim and bumper are not extrapolated into the rectified view. Confidence in the usable optical core is much higher than in the extreme rim or its absolute longitudinal mount. Rectified images use a forward pinhole crop, not a full-width fill of a nearly 180° fisheye. Check the rectified images for straight masonry joints, posts and lane edges, and the paired overlays for projections that land on the same identifiable landmarks as the measured features. A lens with 0 transfers shares no landmark with another lens and is tied to the rest by the car's motion alone.",
         "",
     ]
-    (OUT / "report.md").write_text(chr(10).join(lines))
+    (OUT / "report.md").write_text(chr(10).join(lines), encoding="utf-8")
     print(chr(10).join(lines), flush=True)
 
 

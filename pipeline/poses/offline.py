@@ -37,8 +37,9 @@ class Fit:
     def pools(self):
         train = [[], [], [], []]
         hold = [[], [], [], []]
-        for ci in range(7):
-            if ci < 6:
+        # One pool of single-lens tracks per camera, then (ci == NC) the cross-lens tracks.
+        for ci in range(NC + 1):
+            if ci < NC:
                 x = np.load(W / f"lk-{NAMES[ci]}.npz")
                 id = x["id"]
                 k = np.repeat(np.arange(len(self.ix), dtype="i"), np.diff(x["ptr"]))
@@ -65,7 +66,7 @@ class Fit:
             is_hold = ((tid.astype("uint64") * 9176 + ci * 37 + 17) % 13) == 0
             enough = (length >= 4) & (dd > 1.0)
             cell = (
-                (self.kidx[k[st]] * 6 + c[st]) * 4
+                (self.kidx[k[st]] * NC + c[st]) * 4
                 + np.minimum(3, (uv[st, 0] / self.sizes[c[st], 0] * 4).astype(int))
             ) * 3 + np.minimum(2, (uv[st, 1] / self.sizes[c[st], 1] * 3).astype(int))
             rng = np.random.default_rng(127 + ci)
@@ -74,12 +75,12 @@ class Fit:
             cand = cand[np.argsort(-prio[cand])]
             ii = np.unique(cell[cand], return_index=True)[1]
             keep = cand[ii]
-            if ci == 6:  # each cross-lens point independently informs metric baselines
+            if ci == NC:  # each cross-lens point independently informs metric baselines
                 rest = np.delete(cand, ii)
                 keep = np.r_[keep, rest[np.unique(cell[rest], return_index=True)[1]]]
             for idx, out, maxn in [
                 (np.sort(keep), train, 16),
-                (np.flatnonzero(is_hold & enough & ((dd > 12) | (ci == 6))), hold, 60),
+                (np.flatnonzero(is_hold & enough & ((dd > 12) | (ci == NC))), hold, 60),
             ]:
                 num = np.minimum(length[idx], maxn)
                 rep = np.repeat(np.arange(len(idx)), num)
@@ -246,7 +247,13 @@ class Fit:
                 ],
                 dtype="i",
             ).tofile(f)
-            for x in [[loss], self.cp, self.corr, prior, self.pts, edges, smooth]:
+            # bundle.cpp (and road/poses.py, which patches this file in place) reads six camera slots. A car
+            # with fewer cameras leaves the last ones zero; no observation refers to them.
+            if NC > 6:
+                raise ValueError("the trajectory solver's problem format holds at most six cameras")
+            cp = np.zeros((6, self.cp.shape[1]))
+            cp[:NC] = self.cp
+            for x in [[loss], cp, self.corr, prior, self.pts, edges, smooth]:
                 np.ascontiguousarray(x, dtype="d").tofile(f)
             for j in range(0, len(self.k), 100000):
                 sl = slice(j, j + 100000)
@@ -279,7 +286,7 @@ class Fit:
 
     def bycam(self):
         e = self.errors()
-        return [e[self.cam == i] for i in range(6)]
+        return [e[self.cam == i] for i in range(NC)]
 
     def save(self):
         e = self.errors()

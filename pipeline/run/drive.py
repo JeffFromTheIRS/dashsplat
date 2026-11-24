@@ -381,7 +381,13 @@ def validate(root, k):
     signs = outputs(root, k)
     if k == "inventory":
         inv = read(root / "inventory.json")
-        if not inv["clips"] or not inv["windows"] or len(inv["counts"]) != 6:
+        # Every clip group carries the same cameras (six on HW4, four on HW3), front among them.
+        if (
+            not inv["clips"]
+            or not inv["windows"]
+            or "front" not in inv["counts"]
+            or any(set(g["paths"]) != set(inv["counts"]) for g in inv["clips"])
+        ):
             raise ValueError("invalid inventory")
     if k == "ingest":
         import numpy as np
@@ -548,8 +554,10 @@ def run(a):
                 inputs["rig_mode"] = a.rig
                 if a.rig != "stored":
                     inputs["rig_ba"] = sig(HOME / "work/calib/build/rig_ba")
+                    # the limits of this installation's own rig when it has them (calibration.limits_file)
+                    own = HOME / "calib/rig-baseline.json"
                     inputs["gross_baseline_sha256"] = hashlib.sha256(
-                        (HERE / "rig-baseline.json").read_bytes()
+                        (own if own.is_file() else HERE / "rig-baseline.json").read_bytes()
                     ).hexdigest()
             key = digest([k, inputs, params, code])
             prev = rec.get(k, {})

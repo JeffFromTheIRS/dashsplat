@@ -1,6 +1,6 @@
 import json
 import numpy as np
-from .sample import CAMS, NAMES, WORK, PHOTO
+from .sample import CAMS, NAMES, NC, WORK, PHOTO
 from .model import basis
 from scipy.sparse import coo_matrix, diags
 from scipy.sparse.linalg import spsolve
@@ -26,9 +26,9 @@ def observations(name):
 def solve(M, i, j, t, end, local_prior=6):
     knots = np.unique(np.r_[t[0], np.arange(t[0], t[end] + 0.001, 0.65), t[end]])
     nn = len(knots)
-    ng = 6 * nn
+    ng = NC * nn  # one gain per knot and lens, then D shading terms per lens
     D = 33
-    L = ng + 6 * D
+    L = ng + NC * D
     k = M[:, 2].astype(int)
     c = M[:, 3].astype(int)
     tm = t[np.minimum(k, end)]
@@ -37,7 +37,7 @@ def solve(M, i, j, t, end, local_prior=6):
     upper = np.minimum(b + 1, nn - 1)
     u = (tm - knots[b]) / np.maximum(knots[upper] - knots[b], 1e-8)
     idx = np.column_stack(
-        (6 * b + c, 6 * upper + c, ng + D * c[:, None] + np.arange(D))
+        (NC * b + c, NC * upper + c, ng + D * c[:, None] + np.arange(D))
     )
     val = np.column_stack((1 - u, u, basis(M[:, 4:6])))
     N = len(i)
@@ -51,16 +51,16 @@ def solve(M, i, j, t, end, local_prior=6):
     ).tocsr()
     A.eliminate_zeros()
     y = np.log(M[j, 6:9] / M[i, 6:9])
-    rr = np.arange(ng - 6)
+    rr = np.arange(ng - NC)
     P = coo_matrix(
         (
             np.tile([-4.0, 4.0], len(rr)),
-            (np.repeat(rr, 2), np.stack((rr, rr + 6), 1).ravel()),
+            (np.repeat(rr, 2), np.stack((rr, rr + NC), 1).ravel()),
         ),
         shape=(len(rr), L),
     ).tocsr()
     prior = np.r_[
-        np.full(ng, 0.68), np.tile([5, 5, 7, 7, 8, 12, 12, 13] + [local_prior] * 25, 6)
+        np.full(ng, 0.68), np.tile([5, 5, 7, 7, 8, 12, 12, 13] + [local_prior] * 25, NC)
     ]
     prior[0] = 1e4
     normal = P.T @ P + diags(prior**2)
@@ -71,11 +71,11 @@ def solve(M, i, j, t, end, local_prior=6):
         X = spsolve(H.tocsc(), A.T @ (w[:, None] * y))
         e = np.median(abs(A @ X - y), axis=1)
         w = 1 / np.sqrt(1 + (e / 0.063) ** 2)
-    G = X[:ng].reshape(nn, 6, 3)
-    gain = np.stack([np.interp(t, knots, v) for v in G.reshape(nn, 18).T], 1).reshape(
-        -1, 6, 3
+    G = X[:ng].reshape(nn, NC, 3)
+    gain = np.stack([np.interp(t, knots, v) for v in G.reshape(nn, NC * 3).T], 1).reshape(
+        -1, NC, 3
     )
-    return gain, X[ng:].reshape(6, D, 3)
+    return gain, X[ng:].reshape(NC, D, 3)
 
 
 def run(name):
@@ -95,9 +95,9 @@ def run(name):
         gain, V = solve(M, i[train], j[train], t, len(t) - 1)
         sh = [V]
     else:
-        sh = [np.zeros((6, 33, 3))]
+        sh = [np.zeros((NC, 33, 3))]
         base = [
-            np.zeros((6, 3))
+            np.zeros((NC, 3))
         ]  # Prefix fits exclude the current packet. Freeze the fixed sensor calibration after the exit.
         # Calibrate shading only from moving viewpoints. A seventy-second stop
         # otherwise contributes thousands of copies of the same shadow.
@@ -124,7 +124,7 @@ def run(name):
             epoch[end + 1 :] = len(sh)
             sh.append(V)
             base.append(np.median(gg[: end + 1], axis=0))
-        gain = np.zeros((len(t), 6, 3))
+        gain = np.zeros((len(t), NC, 3))
         bb = basis(M[:, 4:6])
         raw = np.log(M[:, 6:9])
         o = np.argsort(k[i[~hold]], kind="stable")
@@ -145,12 +145,12 @@ def run(name):
                 )
                 y = old - raw[a] - np.einsum("ni,nij->nj", bb[a], v[c[a]])
                 past = k[b] < m
-                A = np.eye(6)[c[a]] - np.eye(6)[c[b]] * (~past)[:, None]
+                A = np.eye(NC)[c[a]] - np.eye(NC)[c[b]] * (~past)[:, None]
                 rhs = y + gain[k[b], c[b]] * past[:, None]
                 reg = 5.0
                 smooth = 8.0
-                H0 = np.eye(6) * (reg + smooth) + np.ones((6, 6)) * 12.0
-                rr0 = reg * prior + smooth * prev + np.ones((6, 1)) * 12 * prior.sum(0)
+                H0 = np.eye(NC) * (reg + smooth) + np.ones((NC, NC)) * 12.0
+                rr0 = reg * prior + smooth * prev + np.ones((NC, 1)) * 12 * prior.sum(0)
                 for _ in range(3):
                     err = np.mean(abs(A @ G - rhs), axis=1)
                     w = 1 / np.sqrt(1 + (err / 0.055) ** 2)

@@ -4,20 +4,16 @@ import os, sys, json
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 import numpy as np, cv2 as cv
+from pipeline.common import hardware
 from pipeline.common.rig import load_rig, frame_table
 
 RS = Path(os.environ.get("RS", ".")).resolve()
 D = RS / "data/drive"
 W = RS / "work/poses"
 OUT = RS / "poses"
-NAMES = [
-    "front",
-    "back",
-    "left_pillar",
-    "right_pillar",
-    "left_repeater",
-    "right_repeater",
-]
+# The cameras of the calibrated rig, in the index order of every per-camera array: six on HW4, four on HW3.
+NAMES = hardware.roster(RS)
+NC = len(NAMES)
 
 
 def schedule():
@@ -29,6 +25,10 @@ def schedule():
     dist = np.r_[
         0, np.cumsum(np.diff(t) * (np.maximum(v[:-1], 0) + np.maximum(v[1:], 0)) * 0.5)
     ]
+    # The car drops 0.2 to 0.7 s of video between one-minute files. The last frame before a long gap gets a
+    # packet of its own: otherwise its pose waits for the first exposure after the gap, which is later than
+    # the half second the road stage allows the live trajectory.
+    gap = np.r_[np.diff(t) > 0.45, False]
     sel = [0]
     for i in range(1, len(t)):
         j = sel[-1]
@@ -37,6 +37,7 @@ def schedule():
         if (
             change
             or border
+            or gap[i]
             or (not stop[i] and (dist[i] - dist[j] >= 0.50 or t[i] - t[j] >= 0.16))
             or i == len(t) - 1
         ):
@@ -109,7 +110,8 @@ def camera(name):
     ns = s["ns"][:, ci]
     t = s["tc"][:, ci]
     cam = load_rig(RS / "calib/rig.json")[name]
-    w = 1448 if ci == 0 else 960
+    # Track the front lens at up to 1448 px across and the others at up to 960, never above native size.
+    w = min(cam.width, 1448 if ci == 0 else 960)
     h = round(cam.height * w / cam.width)
     scale = np.array([cam.width / w, cam.height / h])
     mask = cv.erode(
@@ -118,7 +120,7 @@ def camera(name):
         ),
         np.ones((9, 9), np.uint8),
     )
-    mode = cv.IMREAD_REDUCED_GRAYSCALE_2 if ci == 0 else cv.IMREAD_GRAYSCALE
+    mode = cv.IMREAD_REDUCED_GRAYSCALE_2 if cam.width >= 2 * w else cv.IMREAD_GRAYSCALE
     px = []
     ids = []
     rows = [0]
@@ -207,4 +209,4 @@ def camera(name):
 
 if __name__ == "__main__":
     schedule()
-    list(ProcessPoolExecutor(6).map(camera, NAMES))
+    list(ProcessPoolExecutor(NC).map(camera, NAMES))

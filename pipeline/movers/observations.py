@@ -3,17 +3,19 @@
 import cv2, json, numpy as np
 from pathlib import Path
 from .inventory import W
+from pipeline.common.hardware import reduction
 from pipeline.common.rig import load_rig, frame_table
 
 cv2.setNumThreads(1)
 
 
 def read(c, n, grey=False):
-    q = 4 if c == "front" else 2
+    # Decode as small as still covers the 724 px working grid.
+    q = reduction(load_rig()[c].width, 724)
     flag = (
-        {2: cv2.IMREAD_REDUCED_GRAYSCALE_2, 4: cv2.IMREAD_REDUCED_GRAYSCALE_4}
+        {1: cv2.IMREAD_GRAYSCALE, 2: cv2.IMREAD_REDUCED_GRAYSCALE_2, 4: cv2.IMREAD_REDUCED_GRAYSCALE_4}
         if grey
-        else {2: cv2.IMREAD_REDUCED_COLOR_2, 4: cv2.IMREAD_REDUCED_COLOR_4}
+        else {1: cv2.IMREAD_COLOR, 2: cv2.IMREAD_REDUCED_COLOR_2, 4: cv2.IMREAD_REDUCED_COLOR_4}
     )[q]
     img = cv2.imread(f"data/drive/frames/{c}/{n:06}.jpg", flag)
     return cv2.resize(img, (724, 469)) if img.shape[:2] != (469, 724) else img

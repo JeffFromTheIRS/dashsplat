@@ -8,7 +8,7 @@ from functools import lru_cache
 
 
 def measure(s):
-    c = 1
+    c = CAMS.index("back")
     ix = np.flatnonzero(s.valid)
     cams, cent = s.poses()
     ego = (
@@ -32,8 +32,8 @@ def measure(s):
         )
 
     def sample(k, X):
-        U = X - cent[6 * k + c]
-        D = U @ cams[6 * k + c]
+        U = X - cent[NC * k + c]
+        D = U @ cams[NC * k + c]
         rho = np.linalg.norm(D[:, :2], axis=1)
         th = np.arctan2(rho, D[:, 2])
         t2 = th**2
@@ -47,9 +47,9 @@ def measure(s):
         U[:, :2] = (
             np.column_stack((co * a[:, 0] + si * a[:, 1], -si * a[:, 0] + co * a[:, 1]))
             + origin
-            - cent[6 * k + c, :2]
+            - cent[NC * k + c, :2]
         )
-        D = U @ cams[6 * k + c]
+        D = U @ cams[NC * k + c]
         rho = np.linalg.norm(D[:, :2], axis=1)
         th = np.arctan2(rho, D[:, 2])
         t2 = th**2

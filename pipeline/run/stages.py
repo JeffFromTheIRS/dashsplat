@@ -76,9 +76,11 @@ def keyframes(production=False):
             "--stopped-hz",
             0,
         )
+    from pipeline.common.hardware import roster
+
     doc = read("depth/keyframes.json")
-    if any(not rows for rows in doc["frames"].values()) or len(doc["frames"]) != 6:
-        raise ValueError("missing six-camera keyframe support")
+    if any(not rows for rows in doc["frames"].values()) or set(doc["frames"]) != set(roster()):
+        raise ValueError("missing keyframe support for one or more cameras")
     if not production:
         write("work/run/preview-keys.json", doc)
 
@@ -126,6 +128,7 @@ def tracking():
 
 def road():
     import numpy as np
+    from pipeline.common.hardware import roster
     from pipeline.common.rig import Trajectory, load_rig
     from pipeline.road import pairs
     from pipeline.road.geometry import ground_to_pixels, pixels_to_ground
@@ -153,16 +156,7 @@ def road():
         ):
             raise ValueError("invalid SE(3) road poses: " + stem)
         per = {}
-        for i, c in enumerate(
-            [
-                "front",
-                "back",
-                "left_pillar",
-                "right_pillar",
-                "left_repeater",
-                "right_repeater",
-            ]
-        ):
+        for i, c in enumerate(roster()):
             cam = load_rig()[c]
             vals = m[(m[:, 1] == i) & (m[:, 10] == 1)]
             es = []

@@ -33,16 +33,19 @@ def align(s):
     # Road fixes height, not mount roll/pitch: a narrow rear strip has poor
     # roll observability and individual roads can bank. Keep the measured
     # up from the motion plane. Do not impose mirror rotations or baselines.
-    # A gauge change does not move a single camera relative to the other five.
+    # A gauge change does not move a single camera relative to the others.
     # The rear glass cannot lie behind the rearmost bumper plane. If the visual
     # no-slip optimum violates that hard physical bound, use the closest feasible
     # origin, and report the conflicting unconstrained estimate separately.
     axes = Rot.from_euler("z", fit[1]).as_matrix()
     p = s.cam[:, 11:14]
     pp = p @ axes
-    cy = np.mean(pp[2:, 1])
-    raw = pp[1, 0] - fit[0]
-    cx = min(fit[0], pp[1, 0] + 0.977)
+    # Lateral zero: the side cameras come in mirrored pairs (pillars and repeaters, or repeaters alone).
+    side = [i for i, n in enumerate(CAMS) if n not in ("front", "back")]
+    back = CAMS.index("back")
+    cy = np.mean(pp[side, 1])
+    raw = pp[back, 0] - fit[0]
+    cx = min(fit[0], pp[back, 0] + 0.977)
     centre = np.array([cx, cy, height]) @ axes.T
     return (
         axes,

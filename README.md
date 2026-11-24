@@ -78,7 +78,9 @@ a quote for longer drives.
 - **Sky and signs are made up.** The clouds in generated frames are invented, and large signs come out as
   plausible-looking garbled text ([pipeline/genfill/REPORT.md](pipeline/genfill/REPORT.md)).
 - **It knows one car.** The calibration, its masks and the thresholds of the rig check all come from one Model 3
-  with HW4 cameras. Other models, HW3's four cameras, the Cybertruck's seven, night and rain are untested.
+  with HW4 cameras. The code also accepts HW3's four cameras (see [HW3 cars](#hw3-cars)): ingest, rig
+  calibration and the runner's stages up to photometry that need no image model have been run on one HW3 car,
+  the rest has not. Other models, the Cybertruck's seven cameras, night and rain are untested.
 - **It needs telemetry in the footage.** The pipeline reads the SEI metadata Tesla writes into dashcam video on
   firmware 2025.44.25 or later, and since 2026.20 Tesla encrypts dashcam clips by default in most markets: decrypt
   them in the car or at dashcam.tesla.com first ([research/06-hugging-face.md](research/06-hugging-face.md)).
@@ -91,12 +93,13 @@ a quote for longer drives.
 
 ### What you need
 
-- **Footage:** a folder of six-camera clips (front, back, left and right pillar, left and right repeater) from one
-  continuous drive, unencrypted, H.264 with the SEI telemetry, at the HW4 sizes (front 2896x1876, others
-  1448x938), with the car moving most of the time.
+- **Footage:** a folder of clips from one continuous drive, unencrypted, H.264 with the SEI telemetry, with the
+  car moving most of the time. Either HW4's six cameras (front, back, left and right pillar, left and right
+  repeater; front 2896x1876, others 1448x938) or HW3's four (front, back, left and right repeater, all 1280x960).
+  The cameras and their sizes must match the calibrated rig.
 - **A calibrated rig:** `calib/rig.json` and `calib/masks/` under the installation root. **This repository does
-  not include one yet.** `pipeline/calib` solves one from footage, but its time windows and body masks were chosen
-  by hand for the author's drive, so expect to adapt it.
+  not include one yet.** `pipeline/calib` solves one from footage: [pipeline/calib/README.md](pipeline/calib/README.md)
+  has the steps for a car other than the author's, which include drawing that car's body masks by hand.
 - **A Mac** with Apple Silicon (built on an M5 Ultra with 96 GB; the image model peaks at about 14 GB of GPU memory),
   Python 3.12 with PyTorch on MPS, Homebrew's `ceres-solver` and `cmake`, the Xcode command-line tools (the
   vehicle check calls Apple Vision through Swift), Bun and FFmpeg. **Or** an x86-64 Linux machine with an NVIDIA GPU
@@ -144,6 +147,38 @@ export RS_INSTALL=$PWD HF_HOME=$PWD/third_party/hf TORCH_HOME=$PWD/third_party/t
 The setup script installs packages, builds the solvers, helpers and viewer, and downloads the models. On Linux the
 runner starts its own private viewer on 127.0.0.1 to check its output; the scene is written to `scene/my-drive`.
 Copy it to a machine running `deploy/serve.ts` to look at it.
+
+### HW3 cars
+
+HW3 records four cameras (front, back and the two repeaters) at 1280x960, and writes the same telemetry on
+firmware 2025.44.25 or later. Every stage now takes its camera list from the footage and the rig instead of
+assuming six, and `pipeline/calib` starts from HW3 lens values
+([pipeline/common/hardware.py](pipeline/common/hardware.py)). **Ingest and rig calibration have been run on one
+HW3 car, on six minutes each of two drives six weeks apart. Of the runner, the stages that need no image model
+(inventory, ingest, the rig check, trajectory, road, keyframes and photometry) have been run on 75 seconds of
+that footage, each by calling its own code on a Windows PC, and passed their checks; the trajectory fit its
+four lenses to 1.2 to 1.8 px RMS, as on HW4. Masks, depth, splats, generated video and the viewer have never
+seen HW3 footage.**
+By its own report the calibration is as tight as the HW4 one: 0.6 to 0.9 px RMS per lens, the two independent
+halves within 3 cm and 0.1 degrees of each other, and a held-out stretch measured from images alone within 0.2 %
+of the odometer. The second drive, calibrated on its own in rain, put every mount within 5 cm and 0.3 degrees
+of the first and every focal length within 0.5 %, and the first drive's rig passed the runner's rig check on
+it. What to expect:
+
+- HW3 footage differs from HW4's in two ways that ingest now measures and corrects
+  ([pipeline/ingest/ingest.py](pipeline/ingest/ingest.py)). The back camera keeps a frame counter of its own,
+  which runs up to a frame a minute fast or slow against the others and at 30 instead of 36 fps while the car
+  stands still, so its frames are timed from the file timestamps instead. And the heading in the telemetry is
+  about 0.6 s old, which made the trajectory turn late by up to a metre.
+- You calibrate your own car first ([pipeline/calib/README.md](pipeline/calib/README.md)), then run with
+  `--rig stored`, or rebuild the rig check's thresholds for your rig as that README describes.
+- There are no pillar cameras, so nothing photographs the sides of the road until the car has passed them, and
+  the front lens shares no view with the others at the same instant. Expect more of the scene to be predicted
+  and the full tier's teacher views to rest on the front camera alone.
+- Depth and masks still work on a 724x469 grid, which stretches a 4:3 frame by 16 %, and the thresholds further
+  down the pipeline were tuned on HW4 lenses.
+
+If you run it, the manifest and a few stills are worth an issue ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ### Where the models come from
 
@@ -195,8 +230,9 @@ Experimental models, assets, fonts and libraries are listed with sources and pin
 What still assumes the author's setup, in the entry points and beyond:
 
 - No calibrated rig and no sample scene are included, so nothing runs out of the box.
-- `pipeline/calib` uses time windows and hand-drawn body masks chosen for the author's drive.
-  `pipeline/run/rig-baseline.json` holds rig-check thresholds measured on his car.
+- On HW4 footage `pipeline/calib` defaults to time windows and hand-drawn body masks chosen for the author's
+  drive (`CALIB_SEGS=auto` and `calib/mask-polygons.json` replace them). `pipeline/run/rig-baseline.json` holds
+  rig-check thresholds measured on his car (a `calib/rig-baseline.json` beside your own rig replaces them).
 - No Mac installer or requirements file. The environments were built by hand on his Mac Studio.
 - Many stage scripts outside `pipeline/run` default to `RS=~/dev/reality-splat` (set `RS` to your installation
   root; the runner does this for the stages it calls), and the stage READMEs give commands for his machines

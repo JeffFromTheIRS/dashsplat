@@ -10,6 +10,7 @@ from PIL import Image
 from scipy.spatial import cKDTree
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import maximum_flow, breadth_first_order
+from pipeline.common.hardware import roster
 from pipeline.common.rig import Trajectory, load_rig, frame_table
 from pipeline.photo.model import Photometry, basis
 from pipeline.road.geometry import ground_to_pixels
@@ -22,13 +23,18 @@ G = 8
 W = Path(os.getenv("GT_WORK", "work/groundtex"))
 OUT = Path(os.getenv("GT_OUT", "scene/stitched-opt-v4/ground"))
 ROAD = Path("scene/road-stitched-v2")
+# Source order, among the cameras this car has.
 CAMS = [
-    "front",
-    "left_pillar",
-    "right_pillar",
-    "back",
-    "left_repeater",
-    "right_repeater",
+    c
+    for c in (
+        "front",
+        "left_pillar",
+        "right_pillar",
+        "back",
+        "left_repeater",
+        "right_repeater",
+    )
+    if c in roster()
 ]
 cv.setNumThreads(1)
 

@@ -15,7 +15,8 @@ SOURCE_START = float(os.getenv("IBR_SOURCE_START", 0))
 SOURCE_END = float(os.getenv("IBR_SOURCE_END", 143))
 TR = traj("stitched")
 PHOTO = Photometry("stitched-ground-v2", RS)
-CAMS = ["front", "left_pillar", "right_pillar"]
+# Forward-looking source lenses; a car without pillar cameras (HW3) has the front alone.
+CAMS = [c for c in ("front", "left_pillar", "right_pillar") if c in rig]
 GH, GW = 96, 148
 OH, OW = 900, 1440
 H, L = 180, 288
@@ -222,7 +223,7 @@ def source(c, i):
     )
     im = cv.imread(
         str(RS / "data/drive/frames" / c / f"{n:06}.jpg"),
-        cv.IMREAD_REDUCED_COLOR_2 if c == "front" else cv.IMREAD_COLOR,
+        cv.IMREAD_REDUCED_COLOR_2 if rig[c].width >= 2896 else cv.IMREAD_COLOR,
     )
     assert im is not None
     im = np.ascontiguousarray(PHOTO.apply(c, int(n), im[:, :, ::-1])[:, :, ::-1])

@@ -443,13 +443,18 @@ def _selfcheck():
     par = res["cam"]
     corr = res["frame"]
     points = res["points"]
+    # The solver's camera order: these names, less any this rig does not have (HW3 has no pillar cameras).
     names = [
-        "front",
-        "back",
-        "left_pillar",
-        "right_pillar",
-        "left_repeater",
-        "right_repeater",
+        n
+        for n in (
+            "front",
+            "back",
+            "left_pillar",
+            "right_pillar",
+            "left_repeater",
+            "right_repeater",
+        )
+        if n in cams
     ]
     raw = _T(meta[:, 16:25].reshape(nc, 3, 3) @ _exp(par[:, 8:11]), par[:, 11:14])
     gauge = raw[0] @ np.linalg.inv(cams["front"].T_ego_cam)

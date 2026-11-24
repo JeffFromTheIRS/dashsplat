@@ -184,7 +184,7 @@ def holdout(s, tr):
             )
             if stats[g, i]
             else (0, 0, None, None)
-            for i in range(6)
+            for i in range(len(NAMES))
         ]
         for g in ["whole", "car park", "90° turn", "exit turn", "fast straight"]
     }
@@ -259,7 +259,7 @@ def main():
         errs.append(e)
     err = np.concatenate(errs)
     repro = []
-    for i in range(6):
+    for i in range(len(NAMES)):
         ii = s.cam == i
         e = err[ii]
         repro.append(
@@ -314,7 +314,7 @@ def main():
     for b in range(int(t[-1] // 10) + 1):
         start = b * 10
         sel = (s.kt[s.k] >= start) & (s.kt[s.k] < start + 10)
-        ncam = [len(np.unique(pi[sel & (s.cam == i)])) for i in range(6)]
+        ncam = [len(np.unique(pi[sel & (s.cam == i)])) for i in range(len(NAMES))]
         bins.append([start, len(np.unique(pi[sel])), *ncam])
         mo = (t >= start) & (t < start + 10) & ~station
         mov.append(float(np.median(ants[mo])) if mo.any() else 0.0)
@@ -362,7 +362,7 @@ def main():
             "offline3d": length(p),
             "offlineXY": length(p[:, :2]),
             "causal3d": length(q),
-            "wheel": float(np.trapezoid(D["speed"], t)),
+            "wheel": float((np.trapezoid if hasattr(np, "trapezoid") else np.trapz)(D["speed"], t)),
             "gpsXY": length(gps),
         },
         gpswheel=list(map(float, np.percentile(100 * (drc / gpc - 1), [10, 50, 90]))),

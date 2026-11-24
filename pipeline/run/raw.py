@@ -7,7 +7,8 @@ from pathlib import Path
 import av
 import cv2
 import numpy as np
-from pipeline.ingest.ingest import CAMS, parse_packet
+from pipeline.common import hardware
+from pipeline.ingest.ingest import CAMS, heading_lag, parse_packet
 from pipeline.ingest.ingest import main as index
 
 
@@ -21,6 +22,10 @@ def write(path, obj):
 
 def inventory(source, bounds, rig_path):
     rig = json.loads(Path(rig_path).read_text())["cameras"]
+    # The calibrated rig says which cameras this car records: six on HW4, four on HW3.
+    cams = [c for c in CAMS if c in rig]
+    if "front" not in cams or set(cams) != set(rig):
+        raise ValueError(f"calibrated rig has unusable cameras: {sorted(rig)}")
     groups = {}
     for p in sorted(Path(source).rglob("*.mp4")):
         name, sep, c = p.stem.rpartition("-")
@@ -37,14 +42,15 @@ def inventory(source, bounds, rig_path):
     if clock and (clock['version'] != 1 or bounds != clock['window'] or set(groups) != set(clock['native_ids'])):
         raise ValueError("window clock must match the requested slice and raw groups")
     counts = collections.Counter()
-    info, seqs, speeds, span, seconds = [], [], [], 0, 0.0
+    info, seqs, speeds, turns, span, seconds = [], [], [], [], 0, 0.0
     for name, paths in sorted(groups.items()):
-        if set(paths) != set(CAMS):
+        if set(paths) != set(cams):
             raise ValueError(
-                f"incompatible/incomplete six-camera rig: {name} missing {set(CAMS) - set(paths)}"
+                f"footage does not match the calibrated rig: {name} has cameras {sorted(paths)}, "
+                f"the rig has {sorted(cams)}. A different hardware generation needs its own calib/rig.json"
             )
         starts = dict(counts)
-        for c in CAMS:
+        for c in cams:
             with av.open(paths[c]) as f:
                 st = f.streams.video[0]
                 if (st.width, st.height) != (rig[c]["width"], rig[c]["height"]):
@@ -78,6 +84,7 @@ def inventory(source, bounds, rig_path):
                         last = rec
                         seqs.append(rec[0])
                         speeds.append(rec[2])
+                        turns.append((float(sei.get("heading", 0.0)), float(sei.get("steer", 0.0))))
                 if c == "front":
                     if first is None or last[1] <= first[1]:
                         raise ValueError(f"no usable Tesla SEI clock: {name}")
@@ -88,7 +95,7 @@ def inventory(source, bounds, rig_path):
             dict(
                 name=name,
                 paths=paths,
-                starts={c: starts.get(c, 0) for c in CAMS},
+                starts={c: starts.get(c, 0) for c in cams},
                 seq=seq_range,
             )
         )
@@ -110,6 +117,10 @@ def inventory(source, bounds, rig_path):
         for group in info:
             group["native_ids"] = clock["native_ids"][group["name"]]
     t = (seq - zero) / fps
+    # HW3 reports its heading late. Measured here over the whole drive, so that every window of it is
+    # corrected by the same amount, however little turning the window itself has.
+    head, steer = np.asarray(turns)[order].T
+    late = heading_lag(t, np.unwrap(np.radians(head)), speed, steer)
     a, b = bounds or [t[0], t[-1]]
     if not 0 <= a < b <= t[-1] + 1 / fps:
         raise ValueError(f"window {a, b} outside recorded clock 0..{t[-1]:.3f}")
@@ -155,6 +166,7 @@ def inventory(source, bounds, rig_path):
             moving=spans,
             windows=windows,
             window=[float(a), float(b)],
+            heading_late_s=late,
         ),
     )
     print(f"{len(info)} groups; {fps:.4f} Hz; motion windows {windows}", flush=True)
@@ -168,16 +180,20 @@ def ingest():
     fps = inv["fps"]
     zero = inv["seq0"]
     a, b = inv["window"]
+    # a late heading is read from that much further on, so the window is decoded that much longer
+    late = inv.get("heading_late_s", 0.0)
     data = Path("data")
     dest = data / "drive"
     sizes = {}
-    raw = {c: [] for c in CAMS}
+    cams = [c for c in CAMS if c in inv["counts"]]
+    owners = hardware.own_counter(cams)
+    raw = {c: [] for c in cams}
     for group in inv["clips"]:
         if (group["seq"][1] - zero) / fps < a - 0.5 or (
             group["seq"][0] - zero
         ) / fps > b + 0.5:
             continue
-        local = {c: [] for c in CAMS}
+        local = {c: [] for c in cams}
         for c, p in group["paths"].items():
             out = dest / "frames" / c
             out.mkdir(parents=True, exist_ok=True)
@@ -187,6 +203,8 @@ def ingest():
                 sizes[c] = [st.width, st.height]
                 pending = collections.defaultdict(collections.deque)
                 idx = 0
+                begin = (group["seq"][0] - zero) / fps
+                own = None  # does this camera count its own frames instead of the front's?
                 for pkt in f.demux(st):
                     if pkt.size:
                         sei, picture = parse_packet(bytes(pkt))
@@ -200,7 +218,15 @@ def ingest():
                         if not sei or "seq" not in sei:
                             continue
                         t = (sei["seq"] - zero) / fps
-                        if not a - 0.25 <= t <= b + 0.25:
+                        if own is None:
+                            own = c in owners or (c != "front" and abs(t - begin - pts) > 1)
+                        margin = 0.25
+                        if own:
+                            # HW3's back camera has a counter of its own, so its frames are placed by file
+                            # timestamp here, with room for the files not starting together; the
+                            # synchronizer below times them properly.
+                            t, margin = begin + pts, 0.75
+                        if not a - margin <= t <= b + margin + late:
                             continue
                         path = out / f"{n:06d}.jpg"
                         if not cv2.imwrite(
@@ -216,12 +242,12 @@ def ingest():
         if len(local["front"]) < 2:
             continue
         (data / "clips" / group["name"]).mkdir(parents=True, exist_ok=True)
-        for c in CAMS:
+        for c in cams:
             raw[c].extend(local[c])
-    if any(len(raw[c]) < 2 for c in CAMS):
+    if any(len(raw[c]) < 2 for c in cams):
         raise ValueError("insufficient synchronized exposures in window")
     write(dest / "raw_tables.json", {**raw, "_sizes": sizes})
-    index(str(data))
+    index(str(data), late)
     # Ingest defines a local front clock. Restore the master raw-clip epoch/rate,
     # retaining its measured inter-camera offsets; no old frames or poses are read.
     meta = json.loads((dest / "meta.json").read_text())
@@ -234,7 +260,7 @@ def ingest():
     for k in ("x", "y"):
         tl[k] *= ratio
     np.savez(p, **tl)
-    for c in CAMS:
+    for c in cams:
         p = dest / "cams" / f"{c}.json"
         rows = json.loads(p.read_text())
         for r in rows:

@@ -5,7 +5,7 @@ No stitched arrays, inspection timestamps or target colours are inputs."""
 import json
 import numpy as np
 from .fit import observations, solve
-from .sample import WORK, PHOTO, CAMS, NAMES
+from .sample import WORK, PHOTO, CAMS, NAMES, NC
 from .model import basis
 
 
@@ -24,10 +24,10 @@ def run(until=None):
     pi = i[~hold][order]
     pj = j[~hold][order]
     ends = np.searchsorted(k[pi], np.arange(n + 1))
-    sh = [np.zeros((6, 33, 3))]
+    sh = [np.zeros((NC, 33, 3))]
     epoch = np.zeros(n, int)
-    gain = np.zeros((n, 6, 3))
-    prior = np.zeros((6, 3))
+    gain = np.zeros((n, NC, 3))
+    prior = np.zeros((NC, 3))
     prevfit = -10.0
     last = 0
     for m in range(1, n):
@@ -73,8 +73,8 @@ def run(until=None):
                 - np.einsum("ni,nij->nj", bb[a], v[c[a]])
                 + gain[k[b], c[b]] * past[:, None]
             )
-            A = np.eye(6)[c[a]] - np.eye(6)[c[b]] * (~past)[:, None]
-            H = np.eye(6) * 10 + np.ones((6, 6)) * 3
+            A = np.eye(NC)[c[a]] - np.eye(NC)[c[b]] * (~past)[:, None]
+            H = np.eye(NC) * 10 + np.ones((NC, NC)) * 3
             rhs0 = 2 * prior + 8 * prev + 3 * prior.sum(0)
             for _ in range(2):
                 wt = 1 / np.sqrt(1 + (abs(A @ G - rhs).mean(1) / 0.065) ** 2)
@@ -145,13 +145,13 @@ def tone():
         ep = p["epoch"]
         z = raw + g[k, c] + np.einsum("ni,nij->nj", bb, sh[ep[k], c])
         anchor = None
-        corr = np.zeros((6, 3))
+        corr = np.zeros((NC, 3))
         old = -2.0
         for j, t in enumerate(s["t"]):
             ix = o[bounds[j] : bounds[j + 1]]
             med = {}
             uc = {}
-            for lens in range(6):
+            for lens in range(NC):
                 sub = ix[c[ix] == lens]
                 if len(sub) < 4:
                     continue

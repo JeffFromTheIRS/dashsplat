@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 import cv2 as cv
 import numpy as np
+from pipeline.common.hardware import roster
 from pipeline.common.rig import load_rig, Trajectory, frame_table
 from pipeline.road.geometry import ground_to_pixels
 
@@ -13,14 +14,9 @@ RS = Path(os.environ.get("RS", ".")).resolve()
 DATA = RS / "data/drive"
 PHOTO = RS / "photo"
 WORK = RS / "work/photo"
-NAMES = [
-    "front",
-    "back",
-    "left_pillar",
-    "right_pillar",
-    "left_repeater",
-    "right_repeater",
-]
+# The lenses of the calibrated rig, in the index order of every per-lens array: six on HW4, four on HW3.
+NAMES = roster(RS)
+NC = len(NAMES)
 _rig = load_rig(RS / "calib/rig.json")
 CAMS = [_rig[n] for n in NAMES]
 

@@ -107,7 +107,7 @@ def build(name, version=1):
             json.dumps(
                 [
                     {kind: index[i, kind] for kind in ("dyn", "sky", "road")}
-                    for i in range(6)
+                    for i in range(len(NAMES))
                 ]
             )
         )
@@ -439,11 +439,11 @@ def build(name, version=1):
                 kind: sum(int(n) in index[i, kind] for n in s["ns"][:, i])
                 for kind in ("dyn", "sky", "road")
             }
-            for i in range(6)
+            for i in range(len(NAMES))
         },
         mask_frames={
             NAMES[i]: {z: len(index[i, z]) for z in ("dyn", "sky", "road")}
-            for i in range(6)
+            for i in range(len(NAMES))
         },
     )
     (scr / "summary.json").write_text(json.dumps(ms, indent=2))

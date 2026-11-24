@@ -106,7 +106,7 @@ def clean(scene, t0, t1, out, workers=8, step=3, max_range=60.0):
             if len(a["views"]) == len(obj):
                 return obj, a["views"], a["sky"], a["dyn"], a["dmin"]
     kf = J(RS / "depth/keyframes.json")["frames"]
-    jobs = [(c, e) for c in ("front", "left_pillar", "right_pillar") for e in kf[c][::step]
+    jobs = [(c, e) for c in ("front", "left_pillar", "right_pillar") if c in kf for e in kf[c][::step]
             if t0 - 10 <= e["t"] <= t1 + 10]
     P = scene.pts[obj, :3].astype("f8")
     cell = np.floor(P[:, :2] / 20).astype(int)

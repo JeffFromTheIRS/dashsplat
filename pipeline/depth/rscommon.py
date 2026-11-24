@@ -16,10 +16,12 @@ from pathlib import Path
 import numpy as np
 
 RS = Path(os.environ.get("RS", "~/dev/reality-splat")).expanduser()
-CAMS = ["front", "back", "left_pillar", "right_pillar", "left_repeater", "right_repeater"]
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import rig as crig  # noqa: E402
+from common.hardware import roster  # noqa: E402
+
+# What "--cams all" means: the cameras of the calibrated rig, six on HW4 and four on HW3.
+CAMS = roster(RS)
 
 def setup_env(threads=8):
     """Process-wide settings: thread caps (shared CPU), MPS fallback, duplicate-OpenMP workaround."""

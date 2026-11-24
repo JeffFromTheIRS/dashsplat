@@ -7,22 +7,12 @@ import numpy as np
 RS = Path(os.environ.get("RS", Path.home() / "dev/reality-splat")).resolve()
 W = RS / "maps/object-v3"
 W.mkdir(parents=True, exist_ok=True)
-CAMS = [
-    "front",
-    "left_pillar",
-    "right_pillar",
-    "left_repeater",
-    "right_repeater",
-    "back",
-]
-NAMES = [
-    "front",
-    "back",
-    "left_pillar",
-    "right_pillar",
-    "left_repeater",
-    "right_repeater",
-]
+from pipeline.common.hardware import roster
+
+# NAMES is the rig's cameras in index order (six on HW4, four on HW3); CAMS the same in processing order,
+# front first and back last.
+NAMES = roster(RS)
+CAMS = [c for c in NAMES if c != "back"] + [c for c in NAMES if c == "back"]
 
 
 def make():
@@ -132,7 +122,7 @@ def produce():
             else (
                 ["front"]
                 if step == "front"
-                else CAMS[1:5]
+                else [c for c in CAMS if c not in ("front", "back")]
                 if step == "sides"
                 else ["back"]
             )

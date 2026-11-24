@@ -6,16 +6,8 @@ from collections import defaultdict
 import subprocess, argparse
 
 B0 = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0.0]])
-YAW = [0, 180, 64, -64, 148, -148]
-PITCH = [-3, -32, -5, -5, -5, -5]
-POS = [
-    [1.94, 0, 1.31],
-    [-0.89, 0, 0.82],
-    [1.12, 0.85, 1.15],
-    [1.12, -0.85, 1.15],
-    [2.53, 0.88, 0.79],
-    [2.53, -0.88, 0.79],
-]
+# Starting lens and mount values for this car's cameras (pipeline/common/hardware.py), one per entry of CAMS.
+PROFILE, FOCAL, YAW, PITCH, POS = hardware.priors(CAMS, native_sizes())
 B = Rot.from_euler("ZY", np.column_stack((YAW, -np.array(PITCH))), degrees=True).as_matrix() @ B0
 
 
@@ -27,7 +19,8 @@ class Scene:
         fr = json.load(open(W / "frames.json"))
         self.fr = fr
         self.nf = len(fr)
-        self.sizes = np.array([json.load(open(DATA / "meta.json"))["sizes"][c] for c in CAMS])
+        sizes = json.load(open(DATA / "meta.json"))["sizes"]
+        self.sizes = np.array([sizes[c] for c in CAMS])
         self.dt = np.array([r["dt"] for r in fr])
         tl = np.load(DATA / "timeline.npz")
         t = tl["t"]
@@ -47,9 +40,9 @@ class Scene:
             )
         )
         self.dtfr = np.zeros((len(fr), 6))
-        f = np.array([3639, 460, 810, 810, 820, 820])
+        f = np.array(FOCAL)
         self.prior = np.column_stack(
-            (f, f, self.sizes * 0.5, np.zeros((6, 7)), POS, np.zeros((6, 2)))
+            (f, f, self.sizes * 0.5, np.zeros((NC, 7)), POS, np.zeros((NC, 2)))
         )
         self.cam = self.prior.copy()
         self.sig = np.broadcast_to(
@@ -73,12 +66,12 @@ class Scene:
                     0.008,
                 ]
             ),
-            (6, 16),
+            (NC, 16),
         ).copy()
         self.sig[:, :2] = f[:, None] * 0.35
         self.pixels = []
         for k in range(len(fr)):
-            for c in range(6):
+            for c in range(NC):
                 self.pixels.append(np.load(W / "features" / f"{k:03d}_{c}.npz")["p"])
         self.pixels = np.vstack([np.pad(p, ((0, 3100 - len(p)), (0, 0))) for p in self.pixels])
         self.valid = np.array(
@@ -93,7 +86,7 @@ class Scene:
         tau = self.dt + self.cam[None, :, 14]
         y = self.base[:, None, 2] + tau * self.base[:, None, 5]
         R = (
-            Rot.from_euler("z", y.reshape(-1, 1)).as_matrix().reshape((-1, 6, 3, 3))
+            Rot.from_euler("z", y.reshape(-1, 1)).as_matrix().reshape((-1, NC, 3, 3))
             @ Rot.from_rotvec(self.dtfr[:, :3]).as_matrix()[:, None]
         )
         t = np.pad(self.base[:, :2], ((0, 0), (0, 1))) + self.dtfr[:, 3:]
@@ -104,8 +97,8 @@ class Scene:
 
     def rayposes(self, nodes):
         im = nodes // 3100
-        k = im // 6
-        c = im % 6
+        k = im // NC
+        c = im % NC
         row = (self.pixels[nodes, 1] / self.sizes[c, 1] - 0.5) * self.cam[c, 15]
         R, T = self.poses()
         rr = R[im]
@@ -129,7 +122,7 @@ class Scene:
 
     def rays(self, nodes):
         im = nodes // 3100
-        c = im % 6
+        c = im % NC
         p = self.cam[c]
         xy = (self.pixels[nodes] - p[:, 2:4]) / p[:, :2]
         r = np.linalg.norm(xy, axis=1)
@@ -148,7 +141,7 @@ class Scene:
 
     def project(self, nodes, X):
         im = nodes // 3100
-        c = im % 6
+        c = im % NC
         R, T = self.rayposes(nodes)
         d = np.einsum("nji,nj->ni", R, X - T)
         rho = np.linalg.norm(d[:, :2], axis=1)
@@ -172,17 +165,17 @@ class Scene:
             files += list((W / "matches-split").glob("*.npz"))
         for file in sorted(files):
             j = int(file.stem)
-            if not self.valid[j // 6]:
+            if not self.valid[j // NC]:
                 continue
             with np.load(file) as d:
                 for key in d.files:
                     i = int(key)
-                    if not self.valid[i // 6] or (not cross and i % 6 != j % 6):
+                    if not self.valid[i // NC] or (not cross and i % NC != j % NC):
                         continue
                     a = d[key]
                     pairs.append((i, j, a))
         pairs.sort(
-            key=lambda p: (p[0] % 6 != p[1] % 6, abs(p[0] // 6 - p[1] // 6), -len(p[2]), p[0])
+            key=lambda p: (p[0] % NC != p[1] % NC, abs(p[0] // NC - p[1] // NC), -len(p[2]), p[0])
         )
         parent = {}
         views = {}
@@ -194,7 +187,7 @@ class Scene:
 
         for i, j, a in pairs:
             u, v = (a[:, 0] + 3100 * i).astype(int), (a[:, 1] + 3100 * j).astype(int)
-            if i % 6 != j % 6:
+            if i % NC != j % NC:
                 C, s = self.rays(u)
                 D, t = self.rays(v)
                 N = np.cross(s, t)
@@ -202,7 +195,7 @@ class Scene:
                 ep = np.abs(np.sum((D - C) * N, axis=1)) / np.maximum(
                     np.linalg.norm(np.cross(D - C, s), axis=1), 1e-9
                 )
-                valid = ep * np.min(self.cam[[i % 6, j % 6], 0]) < 10
+                valid = ep * np.min(self.cam[[i % NC, j % NC], 0]) < 10
                 u, v = u[valid], v[valid]
             for un, vn in zip(u.tolist(), v.tolist()):
                 x = root(un)
@@ -234,7 +227,7 @@ class Scene:
             "raw tracks",
             len(tracks),
             "cross",
-            sum(len(set(v // 3100 % 6 for v in x)) > 1 for x in tracks),
+            sum(len(set(v // 3100 % NC for v in x)) > 1 for x in tracks),
             flush=True,
         )
         return tracks
@@ -262,7 +255,7 @@ class Scene:
         dst = np.linalg.norm(sol - O[ix], axis=1)
         g = (mu < cut) & (dst > 0.6) & (dst < 330) & (np.minimum.reduceat(z, ix) > 0.02)
         first = n[ix] // 3100
-        cross = np.minimum.reduceat(n // 3100 % 6, ix) != np.maximum.reduceat(n // 3100 % 6, ix)
+        cross = np.minimum.reduceat(n // 3100 % NC, ix) != np.maximum.reduceat(n // 3100 % NC, ix)
         score = np.log(ns) * 2 + 2 * cross - np.log1p(mu / cut) + rng.uniform(0, 2, len(tr))
         counts = defaultdict(int)
         accepted = []
@@ -271,8 +264,8 @@ class Scene:
                 continue
             key = (
                 first[j],
-                int(self.pixels[n[ix[j]], 0] / (self.sizes[first[j] % 6, 0] / 4)),
-                int(self.pixels[n[ix[j]], 1] / (self.sizes[first[j] % 6, 1] / 3)),
+                int(self.pixels[n[ix[j]], 0] / (self.sizes[first[j] % NC, 0] / 4)),
+                int(self.pixels[n[ix[j]], 1] / (self.sizes[first[j] % NC, 1] / 3)),
             )
             if counts[key] >= limit:
                 continue
@@ -298,7 +291,6 @@ class Scene:
         self.pi = np.cumsum(keep)[pi[ok]] - 1
 
     def ba(self, it, loss, mode=0):
-        nc = 6
         nf = self.nf
         fname = self.w / "ba.txt"
         out = self.w / "solution.bin"
@@ -319,7 +311,7 @@ class Scene:
             edges.append([a, b, dx, dy, yaw, dd, 0.018 + 0.016 * dd, 0.018 + 0.008 * dd])
         with open(fname, "w") as f:
             print(
-                6,
+                NC,
                 nf,
                 len(self.points),
                 len(self.obs),
@@ -333,7 +325,7 @@ class Scene:
             np.savetxt(
                 f,
                 np.column_stack(
-                    (self.cam, B.reshape((6, 9)), self.prior, self.sig, self.sizes[:, 1])
+                    (self.cam, B.reshape((NC, 9)), self.prior, self.sig, self.sizes[:, 1])
                 ),
                 fmt="%.12g",
             )
@@ -341,27 +333,29 @@ class Scene:
             np.savetxt(f, np.array(edges).reshape((-1, 8)), fmt=["%d", "%d"] + ["%.12g"] * 6)
             np.savetxt(f, self.points, fmt="%.12g")
             im = self.obs // 3100
-            k = im // 6
-            c = im % 6
+            k = im // NC
+            c = im % NC
             np.savetxt(
                 f,
                 np.column_stack((k, c, self.pi, self.dt[k, c], self.pixels[self.obs])),
                 fmt=["%d", "%d", "%d", "%.10g", "%.8f", "%.8f"],
             )
         subprocess.run([W / "build/rig_ba", fname, out], check=True)
+        # Solver output: 16 values per camera, six pose corrections per keyframe, then the points.
         x = np.fromfile(out)
-        self.cam = x[:96].reshape((6, 16))
-        self.dtfr = x[96 : 96 + nf * 6].reshape((-1, 6))
-        self.points = x[96 + nf * 6 :].reshape((-1, 3))
+        nx = NC * 16
+        self.cam = x[:nx].reshape((NC, 16))
+        self.dtfr = x[nx : nx + nf * 6].reshape((-1, 6))
+        self.points = x[nx + nf * 6 :].reshape((-1, 3))
         self.status()
 
     def status(self):
         uv, z = self.project(self.obs, self.points[self.pi])
         err = np.linalg.norm(uv - self.pixels[self.obs], axis=1)
-        c = self.obs // 3100 % 6
+        c = self.obs // 3100 % NC
         print(
             "RMS px",
-            np.round([np.sqrt(np.mean(err[c == i] ** 2)) for i in range(6)], 2),
+            np.round([np.sqrt(np.mean(err[c == i] ** 2)) for i in range(NC)], 2),
             "fx",
             np.round(self.cam[:, 0], 1),
             flush=True,

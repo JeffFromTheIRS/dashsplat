@@ -11,6 +11,11 @@ address. To run it elsewhere:
   (`work/`) and published scenes (`scene/`) live under it; the root `.gitignore` keeps them out of git.
 - Run from the root: `.venv/bin/python pipeline/run/drive.py run /path/to/clips --name my-drive` (add
   `--quality full` for the full tier).
+- The camera list is the installed rig's: HW4's six cameras or HW3's four (front, back, two repeaters). The
+  footage must have exactly those cameras at the rig's sizes, or the inventory stage stops. Everything below
+  that says "six" describes the HW4 car this was measured on; on HW3 the stages up to photometry that need no
+  image model have been run on one 75-second window, the others not
+  ([calibrating another car](../calib/README.md#another-car-including-hw3)).
 - The runner checks each publication over HTTP at `RS_VIEWER_URL`, default `http://127.0.0.1:8090`. On macOS start
   that host first: `cd viewer && bun install && bun run build && cd ..`, `mkdir -p scene`, then
   `bun deploy/serve.ts viewer/dist scene 8090 127.0.0.1`. On Linux the runner starts a private loopback host itself.
@@ -18,7 +23,8 @@ address. To run it elsewhere:
   C++ helpers, the chase-camera bundle (`tools/run-chase/`) and the cache-tool link (`viewer-cache-tool`).
   `pipeline/cuda/setup-drive.sh` builds them on Linux; on a Mac follow the same steps with Homebrew
   (`brew install ceres-solver cmake`) in place of apt. The rig check's thresholds (`rig-baseline.json`) were
-  measured on the author's car.
+  measured on the author's car; `calibration.py baseline` writes those of your own rig to
+  `calib/rig-baseline.json`, which is read in preference.
 - `install.sh` copies the runner to a second machine with `ferry`; you do not need it.
 
 ## Stage inventory (before implementation)

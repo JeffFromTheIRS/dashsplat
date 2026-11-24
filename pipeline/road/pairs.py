@@ -1,6 +1,6 @@
 """Gain-normalised direct road patch registration. Collect raw pixels, not pose residuals."""
 
-from pipeline.poses.motion import inputs, knots, RS, W as PW, D, NAMES, OUT
+from pipeline.poses.motion import inputs, knots, RS, W as PW, D, NAMES, NC, OUT
 from pipeline.common.rig import load_rig, Trajectory
 import numpy as np, cv2 as cv, json, os
 from pathlib import Path
@@ -157,13 +157,13 @@ def build():
                 )
                 if qq >= 0 and kt[k] - kt[ix[qq]] < 8:
                     targets.append(ix[qq])
-            for ci in range(6):
+            for ci in range(NC):
                 gray, mask0, cs, org = view(k, ci)
                 if not len(cs):
                     continue
                 world = (org + cs * CELL) @ rot(yaw[k, ci]).T + xy[k, ci]
                 for j in np.unique(targets):
-                    for cj in range(6):
+                    for cj in range(NC):
                         if k == j and ci >= cj:
                             continue
                         rm = rot(yaw[k, ci] - yaw[j, cj])

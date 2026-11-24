@@ -15,6 +15,7 @@ from .views import (
     T_world_cam,
     undistort_maps,
 )
+from pipeline.common.hardware import reduction
 from functools import lru_cache
 from pathlib import Path
 import numpy as np, cv2 as cv, os, json
@@ -123,15 +124,15 @@ def masks(c, n):
 
 @lru_cache(36)
 def rgb(c, n, hi=False):
-    flag = (
-        (cv.IMREAD_COLOR if c == "front" else cv.IMREAD_REDUCED_COLOR_2)
-        if hi
-        else (cv.IMREAD_REDUCED_COLOR_4 if c == "front" else cv.IMREAD_REDUCED_COLOR_2)
-    )
+    # About 724 px across for every lens; `hi` gives the front lens up to 1448 px from its full frame.
+    small = {1: cv.IMREAD_COLOR, 2: cv.IMREAD_REDUCED_COLOR_2, 4: cv.IMREAD_REDUCED_COLOR_4}[
+        reduction(rig[c].width, 724)
+    ]
+    flag = cv.IMREAD_COLOR if hi and c == "front" else small
     a = cv.imread(str(RS / "data/drive/frames" / c / ("%06d.jpg" % n)), flag)
     assert a is not None
-    if hi and c == "front":
-        a = cv.resize(a, (1448, 938), interpolation=cv.INTER_AREA)
+    if hi and c == "front" and a.shape[1] > 1448:
+        a = cv.resize(a, (1448, round(a.shape[0] * 1448 / a.shape[1])), interpolation=cv.INTER_AREA)
     return photo.apply(c, n, a[:, :, ::-1])
 
 

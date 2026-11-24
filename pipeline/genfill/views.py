@@ -38,6 +38,7 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 
+from pipeline.common.hardware import roster
 from pipeline.common.rig import load_rig, Trajectory, T_world_cam, undistort_maps
 from pipeline.photo.model import Photometry
 from pipeline.road.scene import reader
@@ -46,7 +47,7 @@ RS = Path(os.environ.get("RS", Path.home() / "dev/reality-splat")).resolve()
 START, END = 85.0, 140.0
 REAL_SIZE = (1024, 576)
 CHASE_SIZE = (1408, 896)
-CAMS = ["front", "back", "left_pillar", "right_pillar", "left_repeater", "right_repeater"]
+CAMS = roster(RS)  # the cameras of the calibrated rig: six on HW4, four on HW3
 FOV = {"front": 44.0, "back": 83.0}  # horizontal degrees, others 80 (as pipeline/stitch)
 BANDS = 8
 BG = np.array([22, 26, 30], "f")
@@ -111,7 +112,7 @@ def photo(c, n, size):
     """Undistorted, photometry-corrected RGB uint8 photo on the camera's pinhole design."""
     C = rig[c]
     im = cv.imread(str(RS / "data/drive/frames" / c / f"{n:06d}.jpg"),
-                   cv.IMREAD_REDUCED_COLOR_2 if c == "front" else cv.IMREAD_COLOR)
+                   cv.IMREAD_REDUCED_COLOR_2 if C.width >= 2896 else cv.IMREAD_COLOR)
     assert im is not None, (c, n)
     rgb = np.clip(photometry().apply(c, n, im[:, :, ::-1].astype("f")), 0, 255).astype("B")
     K, mx, my, valid, _ = design(c, size)

@@ -5,6 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 import cv2 as cv
 import numpy as np
+from pipeline.common.hardware import reduction, roster
 from pipeline.common.rig import load_rig, Trajectory, T_world_cam, undistort_maps
 from pipeline.photo.model import Photometry
 
@@ -14,14 +15,8 @@ WORK.mkdir(parents=True, exist_ok=True)
 START = float(os.getenv("STITCH_START", 85))
 END = float(os.getenv("STITCH_END", 140))
 CACHE = WORK / f"views-{START:g}-{END:g}"
-CAMS = [
-    "front",
-    "back",
-    "left_pillar",
-    "right_pillar",
-    "left_repeater",
-    "right_repeater",
-]
+# The cameras of the calibrated rig in schedule-column order: six on HW4, four on HW3.
+CAMS = roster(RS)
 W, H, BANDS = 336, 216, 8
 rig = load_rig(RS / "calib/rig.json")
 traj = Trajectory(RS / "poses/ego.npz")
@@ -144,7 +139,9 @@ def prep_group(group):
     stem = "%06d" % n
     im = cv.imread(
         str(RS / "data/drive/frames" / c / (stem + ".jpg")),
-        cv.IMREAD_REDUCED_COLOR_4 if c == "front" else cv.IMREAD_REDUCED_COLOR_2,
+        {1: cv.IMREAD_COLOR, 2: cv.IMREAD_REDUCED_COLOR_2, 4: cv.IMREAD_REDUCED_COLOR_4}[
+            reduction(rig[c].width, 724)
+        ],
     )
     assert im is not None
     im = photo.apply(c, n, im[:, :, ::-1])

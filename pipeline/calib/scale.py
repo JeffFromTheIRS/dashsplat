@@ -36,9 +36,10 @@ def run(step):
     s.save()
     xyz = np.pad(s.base[ix, :2], ((0, 0), (0, 1))) + s.dtfr[ix, 3:]
     _, origin, _ = align(Scene().load())
-    xyz += Rot.from_rotvec(s.dtfr[ix, :3]).apply(np.broadcast_to(origin, xyz.shape))
+    # a copy, because SciPy 1.17's Rotation.apply refuses the read-only view broadcast_to returns
+    xyz += Rot.from_rotvec(s.dtfr[ix, :3]).apply(np.broadcast_to(origin, xyz.shape).copy())
     dist = np.linalg.norm(np.diff(xyz, axis=0), axis=1).sum()
-    n = s.obs // 3100 % 6
+    n = s.obs // 3100 % NC
     cross = len(
         np.unique(
             s.pi[
@@ -63,5 +64,6 @@ if __name__ == "__main__":
     runs = [run(s) for s in [0.6, 1.3]]
     tl = np.load(DATA / "timeline.npz")
     sel = (tl["t"] >= runs[0]["start"]) & (tl["t"] <= runs[0]["end"])
-    telem = float(np.trapezoid(tl["speed"][sel], tl["t"][sel]))
+    integrate = np.trapezoid if hasattr(np, "trapezoid") else np.trapz  # NumPy 2 renamed it
+    telem = float(integrate(tl["speed"][sel], tl["t"][sel]))
     json.dump(dict(visual=runs, telemetry=telem), open(W / "scale-check.json", "w"), indent=2)

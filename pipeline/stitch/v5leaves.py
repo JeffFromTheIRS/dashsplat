@@ -8,7 +8,7 @@ from scipy.spatial import Delaunay, QhullError
 def image(c, n):
     a = cv.imread(
         str(RS / "data/drive/frames" / c / f"{n:06}.jpg"),
-        cv.IMREAD_REDUCED_COLOR_2 if c == "front" else cv.IMREAD_COLOR,
+        cv.IMREAD_REDUCED_COLOR_2 if rig[c].width >= 2896 else cv.IMREAD_COLOR,
     )
     return a[:, :, ::-1].copy(), cv.cvtColor(a, cv.COLOR_BGR2GRAY)
 
@@ -142,13 +142,7 @@ def run():
     bags = []
     cnt = 0
     vol = Volume()
-    for c in [
-        "front",
-        "left_pillar",
-        "right_pillar",
-        "left_repeater",
-        "right_repeater",
-    ]:
+    for c in [c for c in CAMS if c != "back"]:
         allrows = [e for e in schedule()[c] if not e["hold"]]
         ds = np.array([e["odo"] for e in allrows])
         last = -1e10

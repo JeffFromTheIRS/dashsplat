@@ -1,4 +1,4 @@
-// Outlines of the six camera fields of view, drawn from the car in Memory mode: they explain at a glance why
+// Outlines of the camera fields of view (six on HW4, four on HW3), drawn from the car in Memory mode: they explain at a glance why
 // a place is remembered rather than currently seen. Border rays use each camera's fisheye model (equidistant,
 // distortion ignored) so the 174-degree rear camera draws as the cone it is.
 

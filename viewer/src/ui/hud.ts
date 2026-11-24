@@ -219,7 +219,7 @@ export class Hud {
     this.legend.innerHTML = `<div class="lg-title">${icons.memory}<span>Memory</span></div>
       <div class="lg-ramp"><span style="background:#8c9a8a"></span><span style="background:#8a9cac"></span><span style="background:#73869c"></span><span style="background:#5c6984"></span><span class="lg-pred"></span></div>
       <div class="lg-labels"><span>Seen now</span><span>10 s</span><span>1 min+</span><span class="lg-pred-l">Predicted</span></div>
-      <div class="lg-note">Outlines show what the six cameras see right now. Predicted: never seen, inferred from continuity or motion</div>`;
+      <div class="lg-note">Outlines show what the cameras see right now. Predicted: never seen, inferred from continuity or motion</div>`;
 
     r.append(tl, nav, tc, tr, bl, media, trip, this.menu, this.legend, this.stats, this.loading);
     this.setupTrack();
